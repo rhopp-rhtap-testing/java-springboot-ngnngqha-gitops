@@ -1,22 +1,30 @@
-# Generated from templates/source-repo/build-and-update-gitops.yml.njk. Do not edit directly.
+# Generated from templates/gitops-template/gitops-promotion.yml.njk. Do not edit directly.
 
-# 💁 The Gitops Starter workflow will:
+# 💁 The Promotion Pipeline will:
 # - Checkout your repository
-# - Perform a TSSC container image build
-# - Push the built image to the users provided registry
-# - Update the deployment yaml
+# - Compute Promoted Images to Validate
+# - Perform Image EC Validations
+# - Optionally update SBOMS
 
-name: TSSC-Build-Attest-Scan-Deploy
+name: TSSC-Promotion-Pipeline
 env:
   CI_TYPE: github
 
   # 🖊️ EDIT to change the image registry settings.
+  # Registries such as GHCR, Quay.io, and Docker Hub are supported.
+  IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
 
-  # Vars
-  ROX_CENTRAL_ENDPOINT: ${{ vars.ROX_CENTRAL_ENDPOINT }}
-  # GITOPS_AUTH_USERNAME: ${{ vars.GITOPS_AUTH_USERNAME }}
+  # Used to verify the image signature and attestation
+  COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+  # URL of the BOMbastic api host (e.g. https://sbom.trustification.dev)
+  TRUSTIFICATION_BOMBASTIC_API_URL: ${{ vars.TRUSTIFICATION_BOMBASTIC_API_URL }}
+  # URL of the OIDC token issuer (e.g. https://sso.trustification.dev/realms/chicken)
+  TRUSTIFICATION_OIDC_ISSUER_URL: ${{ vars.TRUSTIFICATION_OIDC_ISSUER_URL }}
+  TRUSTIFICATION_OIDC_CLIENT_ID: ${{ vars.TRUSTIFICATION_OIDC_CLIENT_ID }}
+  TRUSTIFICATION_SUPPORTED_CYCLONEDX_VERSION: ${{ vars.TRUSTIFICATION_SUPPORTED_CYCLONEDX_VERSION }}
   # Set this to the user for your specific registry
   IMAGE_REGISTRY_USER: ${{ vars.IMAGE_REGISTRY_USER }}
+  CUSTOM_ROOT_CA: ${{ vars.CUSTOM_ROOT_CA }}
   # Set this only when using an external Rekor instance
   REKOR_HOST: ${{ vars.REKOR_HOST }}
   # Set this only when using an external TUF instance
@@ -24,23 +32,13 @@ env:
   # QUAY_IO_CREDS_USR: ${{ vars.QUAY_IO_CREDS_USR }}
   # ARTIFACTORY_IO_CREDS_USR: ${{ vars.ARTIFACTORY_IO_CREDS_USR }}
   # NEXUS_IO_CREDS_USR: ${{ vars.NEXUS_IO_CREDS_USR }}
-  # Used to verify the image signature and attestation
-  COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
-  # Custom Root CA to be used in scripts as trusted
-  CUSTOM_ROOT_CA: ${{ vars.CUSTOM_ROOT_CA }}
   # Secrets
-  ROX_API_TOKEN: ${{ secrets.ROX_API_TOKEN }}
-  GITOPS_AUTH_PASSWORD: ${{ secrets.GITOPS_AUTH_PASSWORD }}
+  TRUSTIFICATION_OIDC_CLIENT_SECRET: ${{ secrets.TRUSTIFICATION_OIDC_CLIENT_SECRET }}
   # Set this password for your specific registry
   IMAGE_REGISTRY_PASSWORD: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
   # QUAY_IO_CREDS_PSW: ${{ secrets.QUAY_IO_CREDS_PSW }}
   # ARTIFACTORY_IO_CREDS_PSW: ${{ secrets.ARTIFACTORY_IO_CREDS_PSW }}
   # NEXUS_IO_CREDS_PSW: ${{ secrets.NEXUS_IO_CREDS_PSW }}
-  COSIGN_SECRET_PASSWORD: ${{ secrets.COSIGN_SECRET_PASSWORD }}
-  COSIGN_SECRET_KEY: ${{ secrets.COSIGN_SECRET_KEY }}
-
-  # Registries such as GHCR, Quay.io, and Docker Hub are supported.
-  IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
 
   # 🖊️ EDIT to specify custom tags for the container image, or default tags will be generated below.
   IMAGE_TAGS: ""
@@ -48,18 +46,14 @@ env:
   DEFAULT_UPDATE_VIA_PUSH: "true"
   # 🖊️ EDIT to set a name for your OpenShift app, or a default one will be generated below.
   APP_NAME: ""
-on:
-  push:
-    branches:
-      - 'main'
-  workflow_dispatch:
+on: [pull_request, workflow_dispatch]
 
 jobs:
   tssc-ci-cd:
     name: Build and send Image Update PR
     runs-on: ubuntu-24.04
     container:
-      image: quay.io/redhat-appstudio/rhtap-task-runner:latest
+      image: quay.io/redhat-tssc/task-runner:1.7
       options: --privileged
     environment: production
 
@@ -71,19 +65,23 @@ jobs:
             const vars = {
               IMAGE_REGISTRY: `${{ vars.IMAGE_REGISTRY }}`,
 
-              ROX_CENTRAL_ENDPOINT: `${{ vars.ROX_CENTRAL_ENDPOINT }}`,
-              /* GITOPS_AUTH_USERNAME: `${{ vars.GITOPS_AUTH_USERNAME }}`, */
-              /* Set this to the user for your specific registry */
-              IMAGE_REGISTRY_USER: `${{ vars.IMAGE_REGISTRY_USER }}`,
-              /* Set this only when using an external Rekor instance */
-              REKOR_HOST: `${{ vars.REKOR_HOST }}`,
-              /* Set this only when using an external TUF instance */
-              TUF_MIRROR: `${{ vars.TUF_MIRROR }}`,
-              /* QUAY_IO_CREDS_USR: `${{ vars.QUAY_IO_CREDS_USR }}`, */
-              /* ARTIFACTORY_IO_CREDS_USR: `${{ vars.ARTIFACTORY_IO_CREDS_USR }}`, */
-              /* NEXUS_IO_CREDS_USR: `${{ vars.NEXUS_IO_CREDS_USR }}`, */
-              /* Used to verify the image signature and attestation */
-              COSIGN_PUBLIC_KEY: `${{ vars.COSIGN_PUBLIC_KEY }}`,
+             /* Used to verify the image signature and attestation */
+             COSIGN_PUBLIC_KEY: `${{ vars.COSIGN_PUBLIC_KEY }}`,
+             /* URL of the BOMbastic api host (e.g. https://sbom.trustification.dev) */
+             TRUSTIFICATION_BOMBASTIC_API_URL: `${{ vars.TRUSTIFICATION_BOMBASTIC_API_URL }}`,
+             /* URL of the OIDC token issuer (e.g. https://sso.trustification.dev/realms/chicken) */
+             TRUSTIFICATION_OIDC_ISSUER_URL: `${{ vars.TRUSTIFICATION_OIDC_ISSUER_URL }}`,
+             TRUSTIFICATION_OIDC_CLIENT_ID: `${{ vars.TRUSTIFICATION_OIDC_CLIENT_ID }}`,
+             TRUSTIFICATION_SUPPORTED_CYCLONEDX_VERSION: `${{ vars.TRUSTIFICATION_SUPPORTED_CYCLONEDX_VERSION }}`,
+             /* Set this to the user for your specific registry */
+             IMAGE_REGISTRY_USER: `${{ vars.IMAGE_REGISTRY_USER }}`,
+             /* Set this only when using an external Rekor instance */
+             REKOR_HOST: `${{ vars.REKOR_HOST }}`,
+             /* Set this only when using an external TUF instance */
+             TUF_MIRROR: `${{ vars.TUF_MIRROR }}`,
+             /*QUAY_IO_CREDS_USR: `${{ vars.QUAY_IO_CREDS_USR }}`,*/
+             /*ARTIFACTORY_IO_CREDS_USR: `${{ vars.ARTIFACTORY_IO_CREDS_USR }}`,*/
+             /*NEXUS_IO_CREDS_USR: `${{ vars.NEXUS_IO_CREDS_USR }}`,*/
             };
 
             const missingVars = Object.entries(vars).filter(([ name, value ]) => {
@@ -97,15 +95,12 @@ jobs:
 
             const secrets = {
 
-             ROX_API_TOKEN: `${{ secrets.ROX_API_TOKEN }}`,
-             GITOPS_AUTH_PASSWORD: `${{ secrets.GITOPS_AUTH_PASSWORD }}`,
-             /* Set this password for your specific registry */
+             TRUSTIFICATION_OIDC_CLIENT_SECRET: `${{ secrets.TRUSTIFICATION_OIDC_CLIENT_SECRET }}`,
+              /* Set this password for your specific registry */
              IMAGE_REGISTRY_PASSWORD: `${{ secrets.IMAGE_REGISTRY_PASSWORD }}`,
-             /* QUAY_IO_CREDS_PSW: `${{ secrets.QUAY_IO_CREDS_PSW }}`, */
-             /* ARTIFACTORY_IO_CREDS_PSW: `${{ secrets.ARTIFACTORY_IO_CREDS_PSW }}`, */
-             /* NEXUS_IO_CREDS_PSW: `${{ secrets.NEXUS_IO_CREDS_PSW }}`, */
-             COSIGN_SECRET_PASSWORD: `${{ secrets.COSIGN_SECRET_PASSWORD }}`,
-             COSIGN_SECRET_KEY: `${{ secrets.COSIGN_SECRET_KEY }}`,
+             /*QUAY_IO_CREDS_PSW: `${{ secrets.QUAY_IO_CREDS_PSW }}`,*/
+             /*ARTIFACTORY_IO_CREDS_PSW: `${{ secrets.ARTIFACTORY_IO_CREDS_PSW }}`,*/
+             /*NEXUS_IO_CREDS_PSW: `${{ secrets.NEXUS_IO_CREDS_PSW }}`,*/
             };
 
             const missingSecrets = Object.entries(secrets).filter(([ name, value ]) => {
@@ -150,34 +145,20 @@ jobs:
           ec version
           git config --global --add safe.directory $(pwd)
           cat rhtap/env.sh
-      - name: Init
+      - name: Verify Ec
         run: |
-          echo "• init"
-          bash /work/rhtap/init.sh
-      - name: Build
+          echo "• gather-deploy-images"
+          bash /work/rhtap/gather-deploy-images.sh
+          echo "• verify-enterprise-contract"
+          bash /work/rhtap/verify-enterprise-contract.sh
+      - name: Upload Sbom
         run: |
-          echo "• buildah-rhtap"
-          bash /work/rhtap/buildah-rhtap.sh
-          echo "• cosign-sign-attest"
-          bash /work/rhtap/cosign-sign-attest.sh
-      - name: Deploy
-        run: |
-          echo "• update-deployment"
-          bash /work/rhtap/update-deployment.sh
-      - name: Scan
-        run: |
-          echo "• acs-deploy-check"
-          bash /work/rhtap/acs-deploy-check.sh
-          echo "• acs-image-check"
-          bash /work/rhtap/acs-image-check.sh
-          echo "• acs-image-scan"
-          bash /work/rhtap/acs-image-scan.sh
-      - name: Summary
-        run: |
-          echo "• show-sbom-rhdh"
-          bash /work/rhtap/show-sbom-rhdh.sh
-          echo "• summary"
-          bash /work/rhtap/summary.sh
+          echo "• gather-images-to-upload-sbom"
+          bash /work/rhtap/gather-images-to-upload-sbom.sh
+          echo "• download-sbom-from-url-in-attestation"
+          bash /work/rhtap/download-sbom-from-url-in-attestation.sh
+          echo "• upload-sbom-to-trustification"
+          bash /work/rhtap/upload-sbom-to-trustification.sh
       - name: Done
         run: |
           echo "Done"
